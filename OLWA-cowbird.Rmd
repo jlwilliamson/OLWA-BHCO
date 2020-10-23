@@ -1,0 +1,803 @@
+---
+title: "OLWA-BHCO Range Overlap"
+author: "Jessie Williamson"
+date: "10/23/2020"
+output: html_document
+---
+
+This script includes all data processing code associated with our note for Western Birds, "Olive Warbler brood parasitism by the Brown-headed Cowbird", In revision. 
+
+Our observation of the second-documented instance of Olive Warbler brood parasitism by the Brown-headed Cowbird prompted us to ask: How often do these two species co-occur synchronously and/or asynchronously in habitat and/or elevation? To address locality overlap of these two species across the Olive Warbler range, we conducted a brief analysis of Global Biodiversity and Information Facility (GBIF) and eBird records.
+
+**Approach**: In this script, we use the 'rgbif' package to download GBIF records for the Olive Warbler (OLWA) and Brown-headed Cowbird (BHCO). Data were filtered and processed following the workflow outlined here and described in our paper. We then import OLWA and BHCO eBird records obtained from ebird.org and filter these data by checklist effort. We then merged filtered eBird data with GBIF data (to retain iNaturalist observations and data associated with vouchered museum specimens). Finally, we isolate localities of synchronous and asynchronous overlap between these two species, download and crop raster elevation layers to our study areas (Mexico and southwestern USA) and plot asynchronous overlap localities, synchronous overlap localities, and documented parasitism events. 
+
+Note: we opted *not* to use the elevation() function in 'rgbif' to pull missing elevation records, as this wasn't something we assessed in our Western Birds Note. It is possible, however (see commented out code chunk for OLWA below).
+
+FYI, code in this script is not nearly as streamlined as it could be, but it served our purposes. 
+
+########
+
+
+---
+```{R}
+rm(list=ls(all=TRUE)) # clear workspace 
+setwd("/Users/Jessie/Dropbox (MSBbirds)/Rdirectory/OLWA-cowbird")
+```
+
+
+# Load packages
+```{R}
+library(rgbif)
+library(plyr)
+library(dplyr)
+library(XML)
+library(httr)
+library(maps)
+library(ggplot2)
+library(elevatr)
+library(DescTools)
+library(maptools)
+library(auk)
+library(lubridate)
+library(gridExtra)
+library(tidyverse)
+library(tidyr)
+
+library(cowplot)
+library(googleway)
+library(ggplot2)
+library(ggrepel)
+library(ggspatial)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+# Resolve namespace conflicts
+select <- dplyr::select
+```
+
+
+# GBIF and eBird subset criteria:
+```{r}
+# subset criteria for GBIF "xxxx.sub" datasets:
+sc <- c("species"
+        , "decimalLatitude" 
+        , "decimalLongitude"
+        , "coordinateUncertaintyInMeters"
+        , "month"
+        , "year"
+        , "elevation"
+        , "countryCode"
+        , "locality"
+        , "basisOfRecord"
+        , "institutionCode"
+        , "collectionCode"
+        )
+
+ebird.subset <- c("COMMON.NAME"
+                  , "SCIENTIFIC.NAME"
+                  , "COUNTRY.CODE"
+                  , "STATE"
+                  , "COUNTY"
+                  , "LOCALITY"
+                  , "SAMPLING.EVENT.IDENTIFIER" # checklist ID 
+                  , "LATITUDE" 
+                  , "LONGITUDE"
+                  , "OBSERVATION.DATE"
+                  , "PROTOCOL.TYPE" # incidental, stationary, traveling, etc. 
+                  , "PROJECT.CODE"
+                  , "DURATION.MINUTES" # checklist duration
+                  , "EFFORT.DISTANCE.KM" # distance traveled 
+                  , "EFFORT.AREA.HA" # checklist/survey area 
+        )
+```
+
+
+# Geonames note 
+```{r}
+# If you do wish to download missing elevation records, you'll need to make an account with the FREE service, 
+# Geonames: http://www.geonames.org/
+# Geonames uses srtm tiles to download elevation data for latitudes and longitudes 
+# It works very well, but tends to be slow, and you can process maximum ~6,000-10,000 records with one download
+# This is why I break large datasets into several evenly-divided chunks
+# I find ~6,000 max x higher number downloads works better than 10,000 with fewer downloads 
+# Regardless, after you exceed your free "credit" allotment (aka # elev downloads), you'll get timed out of the service 
+# This process is somewhat clunky, but made more efficient by having >1 username to be able to use simultaneously 
+# I like to toggle between ~5 usernames to get downloads I need, and it still involves a lot of waiting 
+# Please let me know if you know of a more efficient elevation download method! Reach me at jwilliamson0110@gmail.com. 
+```
+
+
+
+## OLIVE WARBLER 
+
+# OLWA: Import GBIF Data 
+Note: After running this initially, no need to run again. Pick up script in code chunk that reads 'START HERE'.  
+```{r}
+# Import data
+name_suggest(q="Peucedramus taeniatus", rank="species") # Taxon key: 2492276
+#name_suggest(q="Molothrus ater", rank="species") # Taxon key: 2484391
+# For some reason $key[1] wasn't working; maybe GBIF changed data format? Regardless, key is first column 
+
+# head(name_lookup(query = "Peucedramus taeniatus", rank="species", return = 'data'))
+
+# rgbif formatting has changed since I last used it
+# In order to download records, now need to pass taxonkey through this pred function; see help files 
+olwa.pred <- pred("taxonKey", 2492276)
+
+# pass olwa taxon key generated through pred function into occ_download
+# not exactly sure how to specify 'hascoordinates=TRUE', though seems this needs to happen in olwa.pred
+# (olwa.dl <- occ_download(olwa.pred, 
+#                          user="jwilliamson", 
+#                          pwd = "gbifgbifgbif", 
+#                          email = "williamson@unm.edu"))
+# COMMENT THIS OUT SO YOU DON'T BEGIN NEW DOWNLOAD EACH TIME YOU RUN CODE 
+
+occ_download_meta(olwa.dl) # check download status 
+
+# Once download is "succeeded", fetch data & pipe zip file into R as a data frame
+olwa <- occ_download_get("0033584-200613084148143", overwrite=TRUE) %>% occ_download_import(fill=FALSE, quote="") 
+
+olwa.cit <- occ_download_get("0033584-200613084148143", overwrite=TRUE) %>% gbif_citation() # get citation w/ DOI
+olwa.cit$download # prints one-line output with DOI
+
+write.csv(olwa, file = "olwa.csv")
+olwa <- read.csv("olwa.csv", header= TRUE)
+```
+
+**OLWA Citation:** 
+RGBIF data citation: "GBIF Occurrence Download https://doi.org/10.15468/dl.r79xx9 Accessed from R via rgbif (https://github.com/ropensci/rgbif) on 2020-08-05"
+
+
+# OLWA: Clean and process GBIF data 
+```{r}
+# Clean data  
+olwa.sub <- subset(olwa, select=sc) # subset data w/ criteria defined in sc
+olwa.sub <- olwa.sub[which(olwa.sub$species == "Peucedramus taeniatus"),] # verify only desired species
+olwa.sub <- olwa.sub %>% filter(!is.na(decimalLatitude)) # keep only records with lat 
+olwa.sub <- olwa.sub %>% filter(!is.na(decimalLongitude)) # keep only records with lon 
+# Necessary to filter out no lat and lon data becuase I downloaded all records, not just those w/ lat-lon
+olwa.sub <- olwa.sub[which(!olwa.sub$decimalLatitude == "0"), ] # Drop lat values of 0 
+olwa.sub <- olwa.sub[which(!olwa.sub$decimalLongitude == "0"), ] # Drop lon values of 0
+olwa.sub <- olwa.sub[which(!olwa.sub$month == "NA"), ] # Drop NA months
+olwa.sub <- olwa.sub[which(!olwa.sub$countryCode == "NA"), ] # Drop NA countries
+colnames(olwa.sub)[colnames(olwa.sub)=="coordinateUncertaintyInMeters"] <- "coord_uncert" # rename col
+olwa.sub <- olwa.sub[order(-olwa.sub$coord_uncert), ] # sort by coordinate uncertainty
+olwa.sub <- subset(olwa.sub, olwa.sub$coord_uncert < 3000 | is.na(olwa.sub$coord_uncert)) 
+    # Drop coord_uncert values >3000 *and* keep NA values for coord_uncert
+
+# Plot points to take a look at the data 
+data(wrld_simpl)
+plot(wrld_simpl, axes=TRUE, col="white") # SOUTH AMERICA: xlim=c(-80,70), ylim=c(-60,10), axes=TRUE, 
+# box() # restore the box around the map
+points(olwa.sub$decimalLongitude, olwa.sub$decimalLatitude, col='orange', pch=20, cex=0.75) # add points
+points(olwa.sub$decimalLongitude, olwa.sub$decimalLatitude, col='red', cex=0.75) # plot points again to add border for better visibility
+
+# Drop unknown basis of records on the grounds that this might not be reliable data 
+olwa.sub <- olwa.sub[which(!olwa.sub$basisOfRecord == "UNKNOWN"), ]
+
+# Species-specific region adjustments: n/a - keep all, as we want to capture all of OLWA's range 
+
+# Remove duplicate records that hit for the following columns
+dup <- duplicated(olwa.sub[, c("species", 'decimalLongitude', 'decimalLatitude', "month", "year", "locality")])
+sum(dup) # number of duplicates
+olwa.sub <- olwa.sub[!dup, ] # drop duplicate records
+
+# Quick summary of collections where we're pulling records from:
+length(unique(olwa.sub$collectionCode)) # 66 collection codes 
+olwa.collections.sum <- olwa.sub %>% group_by(collectionCode) %>% summarise(count = length(collectionCode))
+
+# Subset by records with NA values for elevation and values of zero for elevation  
+#olwa.noelev <- olwa.sub[which(olwa.sub$elevation == 0 | is.na(olwa.sub$elevation)),] 
+# Almost everything in this dataset has no elevation 
+
+
+##### Whole chunk here is coded out because we aren't pulling elevations from rgbif()
+
+# Too big to run in rgbif get elev alone; split into chunks for faster processing 
+# Generally, elevation() can handle 5,000-6,000 records; 10,000 is too big and will crash 
+
+# olwa.split <- split(olwa.sub, (seq(nrow(olwa.sub))-1) %/% 4410) # split into 3 even-ish chunks 
+# # leye.split.unlist <- do.call(rbind.data.frame, leye.split) # unsplits and makes a data frame 
+# 
+# olwa0 <- as.data.frame(olwa.split$"0")
+# olwa1 <- as.data.frame(olwa.split$"1")
+# olwa2 <- as.data.frame(olwa.split$"2")
+# 
+# # Fetch elevations with elevation() from rgbif
+# olwa.e0 <- elevation(olwa0, elevation_model="srtm3", username="jwilliamson0110")
+# olwa.e1 <- elevation(olwa1, elevation_model="srtm3", username="jwilliamson0110")
+# olwa.e2 <- elevation(olwa2, elevation_model="srtm3", username="cgadekgmail")
+#   # elevations get added as column called "elevation_geonames"
+#   # decimalLatitude and decimalLongitude get renamed to latitude and longitude 
+# 
+# # write all to .csv
+# write.csv(olwa.e0, file = "olwa.e0.csv")
+# write.csv(olwa.e1, file = "olwa.e1.csv")
+# write.csv(olwa.e2, file = "olwa.e2.csv")
+# 
+# olwa.all <- rbind(olwa.e0, olwa.e1, olwa.e2) # should be same length as core.sub
+# write.csv(olwa.all, file="olwa.all.csv")
+# 
+# ####
+# 
+# # Compare discrepancies in existing vs. rgbif elev records, remove bad records
+# olwa.qc <- olwa.all
+# olwa.qc$elev_diff <- (olwa.qc$elevation-olwa.qc$elevation_geonames) # Make elev_diff variable 
+# olwa.qc <- olwa.qc[, c(1,2,3,4,5,6,7,13,14,8,9,10,11,12)] # reorder columns 
+# olwa.qc <- olwa.qc[order(-olwa.qc$elev_diff), ] # sort by elev_diff
+# olwa.qc <- subset(olwa.qc, olwa.qc$elev_diff < 300 | is.na(olwa.qc$elev_diff)) 
+# olwa.qc <- subset(olwa.qc, olwa.qc$elev_diff > -300 | is.na(olwa.qc$elev_diff))  # drop negative values
+      # Drop elev_diff values >300m *and* keep NA values for elev_diff
+      # differences of >300 m are indicative of probably weird georeferencing
+      # NA values mean there just weren't original elev values (aka, all taken from rgbif)
+
+#######
+
+# Drop eBird records since we're now working with eBird data to filter effort 
+olwa.sub <- olwa.sub[!grepl("EBIRD", olwa.sub$collectionCode),] # 
+olwa.sum2 <- olwa.sub %>% group_by(collectionCode) %>% summarise(count = length(collectionCode)); olwa.sum2 # Verify no ebird
+# olwa.sub <- olwa.dub[ grep("EBIRD", olwa.sub$collectionCode, invert=TRUE), ]
+# Use this if desired search word isn't true; will avoid from deleting all records 
+
+# Create new final_elev column and merge elevation records  
+# olwa.final <- olwa.qc %>% mutate(final_elev = coalesce(elevation, elevation_geonames)) # If pulling rgbif observations
+# This says: merge original + georeferenced elevations, taking original elevations over elev_geonames
+olwa.gbif.final <- olwa.sub # If doing this without pulling rgbif observations 
+        
+# Sort & finalize .final data (coded out because not needed if not pulling rgbif elevs)
+# olwa.final <- olwa.final[, c(1,2,3,4,5,6,15,7,8,9,10,11,12,13,14)] # reorder columns if you have rgbif observations
+# olwa.final <- olwa.final[order(-olwa.final$month, -olwa.final$final_elev), ] # sort by month
+# olwa.final <- olwa.final[which(!olwa.final$final_elev == "-32768"), ] # get rid of ocean values 
+write.csv(olwa.gbif.final, file = "olwa.gbif.final.no.ebird.records.csv")
+olwa.gbif.final <- read.csv("olwa.gbif.final.no.ebird.records.csv", header= TRUE)
+```
+
+Raw OLWA GBIF observations: 31,039
+Final OLWA GBIF observations (excludes eBird data): 1,354
+
+
+## BROWN-HEADED COWBIRD  
+
+# BHCO: Import GBIF Data 
+Note: After running this initially, no need to run again. Pick up script in code chunk that reads 'START HERE'.  
+```{r}
+# Import data
+name_suggest(q="Molothrus ater", rank="species") # Taxon key: 2484391
+# For some reason $key[1] wasn't working; maybe GBIF changed data format? Regardless, key is first column 
+
+# rgbif formatting has changed since I last used it
+# In order to download records, now need to pass taxonkey through this pred function; see help files 
+bhco.pred <- pred("taxonKey", 2484391)
+
+bhco.pred.condensed <- pred_and(pred("taxonKey", 2484391), pred_lte("decimalLatitude", 37))
+# What this should be saying IS: all cowbird records that are also less than 37 degrees latitude 
+
+# pass olwa taxon key generated through pred function into occ_download
+# not exactly sure how to specify 'hascoordinates=TRUE', though seems this needs to happen in olwa.pred
+# (bhco.dl <- occ_download(bhco.pred.condensed,
+#                          user="jwilliamson",
+#                          pwd = "gbifgbifgbif",
+#                          email = "williamson@unm.edu"))
+# COMMENT THIS OUT SO YOU DON'T BEGIN NEW DOWNLOAD EACH TIME YOU RUN CODE 
+
+occ_download_meta(bhco.dl) # check download status 
+
+# Once download is "succeeded", fetch data & pipe zip file into R as a data frame
+bhco <- occ_download_get("0033596-200613084148143", overwrite=TRUE) %>% occ_download_import(fill=FALSE, quote="") 
+# Annoyingly, file is too big to download, so downloading from GBIF manually. 
+# Original download key for full dataset: 0033590-200613084148143
+
+bhco.cit <- occ_download_get("0033596-200613084148143", overwrite=TRUE) %>% gbif_citation() # get citation w/ DOI
+bhco.cit$download # prints one-line output with DOI
+
+write.csv(bhco, file = "bhco.csv")
+bhco <- read.csv("bhco.csv", header= TRUE)
+```
+
+## Citation
+Citation GBIF.org (05 August 2020) GBIF Occurrence Download https://doi.org/10.15468/dl.hzxwyz
+
+
+# BHCO: Clean and filter GBIF data 
+```{r}
+# Clean data  
+bhco.sub <- subset(bhco, select=sc) # subset data w/ criteria defined in sc
+bhco.sub <- bhco.sub[which(bhco.sub$species == "Molothrus ater"),] # verify only desired species
+bhco.sub <- bhco.sub %>% filter(!is.na(decimalLatitude)) # keep only records with lat 
+bhco.sub <- bhco.sub %>% filter(!is.na(decimalLongitude)) # keep only records with lon 
+# Necessary to filter out no lat and lon data becuase I downloaded all records, not just those w/ lat-lon
+bhco.sub <- bhco.sub[which(!bhco.sub$decimalLatitude == "0"), ] # Drop lat values of 0 
+bhco.sub <- bhco.sub[which(!bhco.sub$decimalLongitude == "0"), ] # Drop lon values of 0
+bhco.sub <- bhco.sub[which(!bhco.sub$month == "NA"), ] # Drop NA months
+bhco.sub <- bhco.sub[which(!bhco.sub$countryCode == "NA"), ] # Drop NA countries
+colnames(bhco.sub)[colnames(bhco.sub)=="coordinateUncertaintyInMeters"] <- "coord_uncert" # rename col
+bhco.sub <- bhco.sub[order(-bhco.sub$coord_uncert), ] # sort by coordinate uncertainty
+bhco.sub <- subset(bhco.sub, bhco.sub$coord_uncert < 3000 | is.na(bhco.sub$coord_uncert)) 
+    # Drop coord_uncert values >3000 *and* keep NA values for coord_uncert
+
+# Remove duplicate records that hit for the following columns
+dup <- duplicated(bhco.sub[, c("species", 'decimalLongitude', 'decimalLatitude', "month", "year", "locality")])
+sum(dup) # number of duplicates
+bhco.sub <- bhco.sub[!dup, ] # drop duplicate records
+# Still a shitton of records after this 
+
+# Limit longitudes to reduce number of records and eliminate wonky points in Africa and India  
+bhco.sub <- bhco.sub[which(!bhco.sub$countryCode == "IN"),] # Exclude India record 
+
+# delete galapagos record & Africa record
+bhco.sub <- subset(bhco.sub, bhco.sub$decimalLongitude < -85.5 & bhco.sub$decimalLongitude > -114 ) 
+# test <- subset(bhco.sub, bhco.sub$decimalLongitude < -114) 
+# Keep only records East of -85.5 (to match OLWA range) and West of -114
+
+# Plot points to take a look at the data 
+# pdf("./BHCO.raw.records.pdf", useDingbats = F) # write out to pdf since huge map file, takes long time to process 
+# data(wrld_simpl)
+# plot(wrld_simpl, axes=TRUE, col="white") # SOUTH AMERICA: xlim=c(-80,70), ylim=c(-60,10), axes=TRUE, 
+# # box() # restore the box around the map
+# points(bhco.sub$decimalLongitude, bhco.sub$decimalLatitude, col='orange', pch=20, cex=0.75) # add points
+# points(bhco.sub$decimalLongitude, bhco.sub$decimalLatitude, col='red', cex=0.75) # plot points again to add border for better visibility
+# dev.off()
+
+# Drop unknown basis of records on the grounds that this might not be reliable data 
+bhco.sub <- bhco.sub[which(!bhco.sub$basisOfRecord == "UNKNOWN"), ]
+
+# Summarize collectionCodes to get a sense of number of eBird records: 
+length(unique(bhco.sub$collectionCode)) # 66 collection codes 
+bhco.coll.sum <- bhco.sub %>% group_by(collectionCode) %>% summarise(count = length(collectionCode)); bhco.coll.sum
+
+# Drop eBird records since we're now working with eBird data to filter effort 
+bhco.sub <- bhco.sub[!grepl("EBIRD", bhco.sub$collectionCode),] 
+bhco.sum2 <- bhco.sub %>% group_by(collectionCode) %>% summarise(count = length(collectionCode)); bhco.sum2 # Verify no ebird
+# eBird gets read into collectionCode even though other museums are mixed into institutionCode AND collectionCode 
+
+# Create final dataset and write out 
+bhco.gbif.final <- bhco.sub 
+
+write.csv(bhco.gbif.final, file = "bhco.gbif.final.no.ebird.records.csv")
+bhco.gbif.final <- read.csv("bhco.final.no.ebird.records.csv", header= TRUE)
+## NOTE: when reading this in, need to remove first "x" row otherwise colname rename below won't work right 
+```
+
+Raw BHCO GBIF observations: 897,367
+Final BHCO GBIF observations (excludes eBird data): 8,798
+
+
+**Final GBIF datasets:**
+olwa.gbif.final
+bhco.gbif.final
+
+
+# Read in eBird data for OLWA and BHCO
+```{r}
+# Import ebird data
+# All observations have lats and lons; all are of desired species since we selected that at download, so no need to filter those
+olwa.ebird <- read.delim("eBird-OliveWarbler-data-Sept2020/ebd_oliwar_relSep-2020.txt")
+bhco.ebird <- read.delim("ebird-Brown-headedCowbird-data-Sept2020/ebd_bnhcow_relSep-2020.txt") # big file 
+
+# Subset data w/ criteria defined in 'ebird.subset'
+olwa.ebird.sub <- subset(olwa.ebird, select=ebird.subset)
+bhco.ebird.sub <- subset(bhco.ebird, select=ebird.subset)
+
+# Subset BHCO records to Olive Warbler range, as we did with GBIF data
+# Everything south of 37 degrees lat; Everything between 85.5 to 114 W 
+bhco.ebird.sub <- subset(bhco.ebird.sub, bhco.ebird.sub$LATITUDE < 37.0)  
+bhco.ebird.sub <- subset(bhco.ebird.sub, bhco.ebird.sub$LONGITUDE < -85.5 & bhco.ebird.sub$LONGITUDE > -114 ) 
+
+# Plot points to take a look at the data 
+# pdf("./test.BHCO.pdf", useDingbats = F) # write out to pdf since huge map file, takes long time to process 
+# data(wrld_simpl)
+# plot(wrld_simpl, axes=TRUE, col="white") 
+# # box() # restore the box around the map
+# points(test$LONGITUDE, test$LATITUDE, col='orange', pch=20, cex=0.75) # add points
+# points(test$LONGITUDE, test$LATITUDE, col='red', cex=0.75) # plot points again to add border for better visibility
+# dev.off()
+
+# Remove duplicate records that hit for the following columns
+olwadup <- duplicated(olwa.ebird.sub[, c("COUNTRY.CODE", "STATE", "LATITUDE", "LONGITUDE", "OBSERVATION.DATE")])
+sum(olwadup) # number of duplicates
+olwa.ebird.sub <- olwa.ebird.sub[!olwadup, ] # drop duplicate records
+
+bhcodup <- duplicated(bhco.ebird.sub[, c("COUNTRY.CODE", "STATE", "LATITUDE", "LONGITUDE", "OBSERVATION.DATE")])
+sum(bhcodup) # number of duplicates
+bhco.ebird.sub <- bhco.ebird.sub[!bhcodup, ] # drop duplicate records
+ 
+# Remove records with extreme sampling effort: 
+olwa.ebird.sub <- subset(olwa.ebird.sub, olwa.ebird.sub$EFFORT.DISTANCE.KM > 3.2 | # Distance traveled > 3.2 km (~2 miles)
+                                           olwa.ebird.sub$EFFORT.AREA.HA > 1.0 |  # Effort area > 1 ha 
+                                           olwa.ebird.sub$DURATION.MINUTES > 300  # Duration minutes > 300 
+                                           ) 
+
+bhco.ebird.sub <- subset(bhco.ebird.sub, bhco.ebird.sub$EFFORT.DISTANCE.KM > 3.2 | 
+                                           bhco.ebird.sub$EFFORT.AREA.HA > 1.0 |  
+                                           bhco.ebird.sub$DURATION.MINUTES > 300   
+                                           ) 
+# We purposefully keep historic, stationary, and traveling checklists within 3.2 km distance to capture the most data 
+
+# Subset by breeding season only (roughly May to July)
+olwa.ebird.sub$OBSERVATION.DATE <- as.Date(olwa.ebird.sub$OBSERVATION.DATE)
+olwa.ebird.final <- subset(olwa.ebird.sub, month(olwa.ebird.sub$OBSERVATION.DATE) %in% c(5:7)) # Subset by May-July
+bhco.ebird.sub$OBSERVATION.DATE <- as.Date(bhco.ebird.sub$OBSERVATION.DATE)
+bhco.ebird.final <- subset(bhco.ebird.sub, month(bhco.ebird.sub$OBSERVATION.DATE) %in% c(5:7)) # Subset by May-July
+
+# For ease of combining with GBIF data, split out the year-month-date column 'OBSERVATION.DATE' into 3 cols 
+olwa.ebird.final <- olwa.ebird.final %>%
+  dplyr::mutate(year = lubridate::year(OBSERVATION.DATE), 
+                month = lubridate::month(OBSERVATION.DATE), 
+                day = lubridate::day(OBSERVATION.DATE))
+
+bhco.ebird.final <- bhco.ebird.final %>%
+  dplyr::mutate(year = lubridate::year(OBSERVATION.DATE), 
+                month = lubridate::month(OBSERVATION.DATE), 
+                day = lubridate::day(OBSERVATION.DATE))
+
+# Write out final ebird files (filtered by effort and breeding season months)
+write.csv(olwa.ebird.final, file = "olwa.ebird.final.csv")
+write.csv(bhco.ebird.final, file = "bhco.ebird.final.csv")
+```
+
+Raw OLWA eBird observations: 13,095
+Final OLWA eBird observations: 827
+
+Raw BHCO eBird observations: 2,108,433
+Final BHCO eBird observations: 37,206
+
+**final eBird datasets:**
+olwa.ebird.final
+bhco.ebird.final
+
+
+# Look at simultaneous OLWA and BHCO overlap from eBird checklists:  
+```{r}
+# Make copies for quick and dirty rounding
+olwa.copy <- olwa.ebird.final
+bhco.copy <- bhco.ebird.final
+
+# Round decimal latitudes and longitudes to the same accuracy (see rationale below); 3 decimal places is ~100 m precision
+olwa.copy$latitude <- round(olwa.copy$LATITUDE, 3) 
+olwa.copy$longitude <- round(olwa.copy$LONGITUDE, 3)
+bhco.copy$latitude <- round(bhco.copy$LATITUDE, 3) 
+bhco.copy$longitude <- round(bhco.copy$LONGITUDE, 3)
+
+# Subset criteria for inner join
+# Just want latitudes and longitudes or you won't properly get overlap
+copy.subset <- c("latitude", "longitude", "SAMPLING.EVENT.IDENTIFIER", "LOCALITY")
+
+# Create just lat and lon list from each OLWA and BHCO
+olwa.copy.innerjoin <- subset(olwa.copy, select=copy.subset)
+bhco.copy.innerjoin <- subset(bhco.copy, select=copy.subset) 
+
+# Find overlap of OLWA and BHCO lats and lons
+copy.overlap <- inner_join(olwa.copy.innerjoin, bhco.copy.innerjoin) 
+checklist.overlap.total <- length(unique(copy.overlap$SAMPLING.EVENT.IDENTIFIER)); checklist.overlap.total
+# OLWA and BHCO appear simultaneously on a total of 26 checklists 
+
+# Total OLWA eBird checklists: 
+olwa.ebird.checklist.total <- length(unique(olwa.ebird.final$SAMPLING.EVENT.IDENTIFIER)); olwa.ebird.checklist.total # 827 
+
+# Proportion of checklists where the two overlap: 
+proportion.checklist.overlap <- (checklist.overlap.total/olwa.ebird.checklist.total)*100; round(proportion.checklist.overlap,2)
+```
+
+
+# Combine GBIF and ebird data for master files 
+```{r}
+# Subset GBIF final datasets to just required columns (for swift merging w/ eBird data)
+g.sub <- c("species"
+        , "decimalLatitude" 
+        , "decimalLongitude"
+        , "month"
+        , "year"
+        , "countryCode"
+        , "locality"
+        )
+
+e.sub <- c("SCIENTIFIC.NAME"
+        , "LATITUDE"
+        , "LONGITUDE"
+        , "month"
+        , "year"
+        , "COUNTRY.CODE"
+        , "LOCALITY" 
+        )
+
+# Subset data
+olwa.g <- subset(olwa.gbif.final, select=g.sub)
+olwa.e <- subset(olwa.ebird.final, select=e.sub)
+bhco.g <- subset(bhco.gbif.final, select=g.sub)
+bhco.e <- subset(bhco.ebird.final, select=e.sub)
+
+# Rename .g GBIF columns (clunky way to do this)...and dplyr/plyr rename() function never works 
+names(olwa.g)[names(olwa.g) == "decimalLatitude"] <- "latitude"
+names(olwa.g)[names(olwa.g) == "decimalLongitude"] <- "longitude"
+names(olwa.g)[names(olwa.g) == "countryCode"] <- "country"
+names(bhco.g)[names(bhco.g) == "decimalLatitude"] <- "latitude"
+names(bhco.g)[names(bhco.g) == "decimalLongitude"] <- "longitude"
+names(bhco.g)[names(bhco.g) == "countryCode"] <- "country"
+
+# Rename .e eBird columns 
+names(olwa.e)[names(olwa.e) == "SCIENTIFIC.NAME"] <- "species"
+names(olwa.e)[names(olwa.e) == "LATITUDE"] <- "latitude"
+names(olwa.e)[names(olwa.e) == "LONGITUDE"] <- "longitude"
+names(olwa.e)[names(olwa.e) == "COUNTRY.CODE"] <- "country"
+names(olwa.e)[names(olwa.e) == "LOCALITY"] <- "locality"
+names(bhco.e)[names(bhco.e) == "SCIENTIFIC.NAME"] <- "species"
+names(bhco.e)[names(bhco.e) == "LATITUDE"] <- "latitude"
+names(bhco.e)[names(bhco.e) == "LONGITUDE"] <- "longitude"
+names(bhco.e)[names(bhco.e) == "COUNTRY.CODE"] <- "country"
+names(bhco.e)[names(bhco.e) == "LOCALITY"] <- "locality"
+
+# Rbind data frames together 
+olwa.master <- rbind(olwa.g, olwa.e) # 2,181 observations
+bhco.master <- rbind(bhco.g, bhco.e) # 46,004 observations 
+
+# Write out master files 
+write.csv(olwa.master, file = "olwa.master.csv")
+write.csv(bhco.master, file = "bhco.master.csv")
+```
+
+OLWA master observations: 2,181
+BHCO master observations: 46,004
+
+
+----
+
+# START HERE IF YOU'VE COMPLETED GBIF DOWNLOAD AND FILTERING *AND* EBIRD IMPORT AND FILTERING 
+No need to re-run top code chunks - those are to download initial GBIF datasets, and then clean and filter data; then to import, filter, and curate eBird data. Since we've already done that, we can pick up here. 
+```{r}
+# Read in final wrangled datasets
+olwa.master <- read.csv("olwa.master.csv", header= TRUE)
+bhco.master <- read.csv("bhco.master.csv", header= TRUE)
+# To keep in mind if you pull rgbif elevations: 
+# These two may have slightly different column lengths and names if you get elevations for OLWA 
+
+# Drop weird X column 1 if reading in from read.csv
+olwa.master <- olwa.master[ , !(colnames(olwa.master) %in% c("X"))] 
+bhco.master <- bhco.master[ , !(colnames(bhco.master) %in% c("X"))] 
+# And, make sure all column names match! 
+
+# Subset by breeding season only (roughly May to July)
+# Remember, you already did this for eBird data, so it's really just for GBIF observations
+olwa.master <- olwa.master[which(olwa.master$month==5 | olwa.master$month==6 | olwa.master$month==7), ] 
+bhco.master <- bhco.master[which(bhco.master$month==5 | bhco.master$month==6 | bhco.master$month==7), ]
+```
+
+FINAL NUMBERS OF OBSERVATIONS TO REPORT FOR PAPER: 
+Total OLWA observations analyzed: 44,134
+Final OLWA observations in filtered dataset: 1,241
+
+Total BHCO observations analyzed: 3,005,800
+Final OLWA observations in filtered dataset: 38,638
+
+
+# Identify localities where OLWA and BHCO overlap
+Some info here on finding common localities: https://stackoverflow.com/questions/32917934/how-to-find-common-rows-between-two-dataframe-in-r
+```{r}
+# Round decimal latitudes and longitudes to the same accuracy (decimal places)
+# Right now all coordinates have 5 decimal places, or ~1.11 m accuracy, but we want to: 
+# 1) Cut down on probability that we *won't* see overlaps due to precision that is unnecessarily high (i.e. 1 m accuracy); and
+# 2) Retain precision that will determine realistic overlaps in habitat and elevation (i.e. ~100m to 1 km) & increase overlaps
+# We've chosen 3 decimal places, or ~100 m precision
+olwa.master$latitude <- round(olwa.master$latitude, 3) 
+olwa.master$longitude <- round(olwa.master$longitude, 3)
+bhco.master$latitude <- round(bhco.master$latitude, 3) 
+bhco.master$longitude <- round(bhco.master$longitude, 3)
+
+# Subset criteria for inner join
+# Just want latitudes and longitudes or you won't properly get overlap
+subset <- c("latitude", "longitude")
+
+# Create just lat and lon list from each OLWA and BHCO
+olwa.master.innerjoin <- subset(olwa.master, select=subset) # subset data w/ criteria defined in sc
+bhco.master.innerjoin <- subset(bhco.master, select=subset) # subset data w/ criteria defined in sc
+
+# Find overlap of OLWA and BHCO lats and lons
+overlap <- inner_join(olwa.master.innerjoin, bhco.master.innerjoin) 
+overlap.coords <- paste(overlap$latitude, overlap$longitude, sep=",")
+locality.overlap.total <- length(unique(overlap.coords)); locality.overlap.total # 81 localities 
+# A total of 1,959 overlaps during the breeding season
+
+# Total number of OLWA localities: 
+olwa.locality.coords <- paste(olwa.master$latitude, olwa.master$longitude, sep=",")
+olwa.localities.total <- length(unique(olwa.locality.coords)); olwa.localities.total # 687 distinct localities 
+
+# Proportion of checklists where the two overlap: 
+proportion.total.olwa.overlap <- (locality.overlap.total/olwa.localities.total)*100; round(proportion.total.olwa.overlap,3)
+# OLWA and BHCO overlap at 81 of 687 distinct OLWA localities, for ~11.8% total locality overlap. 
+
+# Don't need to remove duplidates to plot, as repeated overlaps will only show up at one point - but FYI: 
+# Now, out of curiosity, remove overlapping localities; i.e. same locality points at different time periods: 
+# Remove duplicate records that hit for the following columns
+# dup.over <- duplicated(overlap[, c("latitude", "longitude")])
+# sum(dup.over) # number of duplicates
+# overlap <- overlap[!dup.over, ] # drop duplicate records
+```
+
+Note: using inner_join() is adequate for our purposes of assessing exact coordinate overlap, but it's by no means a perfect method (i.e. in getting at overlap this way, we lose a lot of other info we might want, e.g. month, year, locality name, elevation, etc.) - there are probably better tidyverse ways to do this. 
+
+# Basic map to check locality data (no raster data/elevation layer)
+```{r}
+# Basic map: plot overlap to take a look at the data 
+pdf("./OLWA_and_BHCO_Overlap.pdf", useDingbats = FALSE) 
+data(wrld_simpl)
+plot(wrld_simpl, axes=TRUE, col="white", xlim=c(-140,0), ylim=c(-10,40)) 
+# box() # restore the box around the map
+points(overlap$longitude, overlap$latitude, col='orange', pch=20, cex=0.5) # add points
+#points(overlap$decimalLongitude, overlap$decimalLatitude, col='red', cex=0.75) 
+# plot points again to add border for better visibility
+points(x=-108.4302239, y=32.5929969, col='blue', pch=17, cex=0.75) # add our cowbird OLWA parasitism observation 
+dev.off()
+```
+
+
+# Process spatial data: First step before making elevation map 
+```{r}
+library(raster)
+library(sp)
+
+# DOWNLOAD COUNTRY POLYGONS 
+# Search country 3-letter ISO code: https://www.iso.org/obp/ui/#search
+# Note: Files are large and R tends to crash when plotting; write plots straight to .pdf instead of plotting w/in RStudio
+# Then to crop and mask climate rasters to Mexico and USA
+# THEN to merge these two rasters. 
+mexico <- raster::getData('GADM', country = "MEX", level = 0) # download country shape  
+us <- raster::getData('GADM', country = "USA", level = 1) # level=1 means include state outlines 
+
+# Look at spatial extent (lat, lon) of MEX and USA
+extent(mexico) 
+extent(us)
+
+# Crop whole US shape (which includes Alaska, Hawaii, other islands) to shape of southwest
+extent_southwest <- extent(c(-120.55, -88.52, 24.50, 40.85)) # Need this to be bigger than desired for map cropping below
+us <- crop(us, extent_southwest) # takes a few secs
+
+# Make sure extent looks ok 
+pdf("./southwest_outline.pdf", useDingbats = FALSE) 
+plot(us)
+dev.off()
+# Again, we don't care if this is a lot bigger than southwestern US becasuse we do more cropping with raster map below
+
+# Merge country polygons 
+all_countries <- merge(mexico, us)
+
+# ELEVATION DATA
+mexico_alt <- raster::getData('alt', country = "MEX", mask=TRUE) # Mexico elev data
+us_alt <- raster::getData('alt', country = "USA", mask=TRUE) # US elev data; rasterstack of 4 because of Alaska & islands
+# In US_alt list: [[1]] = mainland, [[2]] = Alaska, [[3]] = islands, [[4]] = Hawaii
+us_alt <- us_alt[[1]] # Assign mainland USA to to us_alt because that's all I want 
+proj4string(mexico_alt) <- CRS("+init=epsg:4326")
+proj4string(us_alt) <- CRS("+init=epsg:4326")
+writeRaster(mexico_alt, "mexico_alt.grd", overwrite=TRUE) # Save raster files 
+writeRaster(us_alt, "us_alt.grd", overwrite=TRUE) 
+mexico_us_elev <- merge(mexico_alt, us_alt) # Merge Mexico and US elev layers for map-making
+writeRaster(mexico_us_elev, "mexico_us_alt.grd", overwrite=TRUE) 
+
+# GET CLIMATE DATA, CROP TO COUNTRY SHAPES
+climate <- raster::getData("worldclim", var="bio", res = 2.5) # download bioclim data
+projection(climate) <- CRS("+init=epsg:4326")
+mexico_clim <- climate %>% crop(., mexico) %>% raster::mask(., mexico) # Crop and mask climate raster to Chile
+us_clim <- climate %>% crop(., us) %>% raster::mask(., us) # Crop and mask climate raster to Peru
+proj4string(mexico_clim) == proj4string(us_clim) #check projections between Peru and Chile files 
+mexico_us <- merge(mexico_clim, us_clim) # Merge Peru and Chile rasters; this forms raster brick 
+plot(mexico_clim$bio1) # Plot this as a test that the above cropping and masking worked
+# # NOTE: must call raster::mask()! Otherwise mask() is actually masked by another function and I get an error message. 
+# # Masking literally masks the shapes of adjoining countries (i.e. "messy stuff") for a clean look; not masking...doesn't.
+plot(mexico_us$layer.18) # plot to verify this worked; layer is calling a bioclim variable
+proj4string(climate) == proj4string(mexico_us) #check projections
+writeRaster(climate, "world_climate.grd", overwrite=TRUE) # the world?; write out bioclim brick; takes ~10-15 mins
+writeRaster(mexico_us, "mexico_us_bioclim.grd", overwrite=TRUE) # Just Mexico and southwestern USA
+
+
+######################################################################
+# IF YOU'VE RUN ALL CODE ABOVE ONCE AND HAVE FILES SAVED, START HERE 
+######################################################################
+
+# READ IN RASTERS TO AVOID RUNNING ALL CODE ABOVE 
+# Need to run BioClim data above to ensure that mexico_Us is a raster brick otherwise you can't extract BioClim
+mexico_us_bioclim <- raster("./mexico_us_bioclim.grd") # read in peru_chile BioClim data
+mexico_alt <- raster("./mexico_alt.grd") #read elevation raster
+us_alt <- raster("./us_alt.grd") #read elevation raster
+
+# Create a spatial data frame of OLWA-BHCO localities
+# NAs in the data will create problems; e.g. you won't be able to make spatial data frame 
+locality.coords <- SpatialPointsDataFrame(
+                   matrix(c(overlap$longitude, overlap$latitude), ncol = 2),
+                   data.frame(ID=1:nrow(overlap)),
+                  # sampling.locality = final$locality,
+                  # sampling.elev = final$elev),
+                   proj4string=CRS("+init=epsg:4326")
+                   )
+
+simultaneous.localities <- SpatialPointsDataFrame(
+                           matrix(c(copy.overlap$longitude, copy.overlap$latitude), ncol = 2),
+                           data.frame(ID=1:nrow(copy.overlap)),
+                           # sampling.locality = final$locality,
+                           # sampling.elev = final$elev),
+                           proj4string=CRS("+init=epsg:4326")
+                           )
+
+# Convert our observation at Jack's Peak into spatial points data frame 
+# Show Low, AZ: Approximate AZ breeding atlas observation point: 34.234649, -110.091346 (estimated from text description)
+longitude <- as.data.frame(c(-108.4302239, -110.091346 ))
+latitude <- as.data.frame(c(32.5929969, 34.234649))
+jackpeak <- cbind(longitude, latitude)
+names(jackpeak)[1] <- "longitude"
+names(jackpeak)[2] <- "latitude"
+
+jackpeak.coords <- SpatialPointsDataFrame(
+                   matrix(c(jackpeak$longitude, jackpeak$latitude), ncol = 2),
+                   data.frame(ID=1:nrow(jackpeak)),
+                  # sampling.locality = final$locality,
+                  # sampling.elev = final$elev),
+                   proj4string=CRS("+init=epsg:4326")
+                   )
+```
+
+
+# Process spatial data, Step 2: OLWA-BHCO Overlap with raster elevation layer 
+```{r}
+library(viridis)
+library(RColorBrewer)
+library(prettymapr)
+
+# CROP MAP EXTENT FOR BETTER VISUALIZATION 
+# crop raster and country lines to a smaller box (hard to get right, requires a lot of tinkering)
+# These are perfect but fairly zoomed out to capture more of southern Chile 
+# What I originally used: 
+#ex <- extent(c(-116.15, -93.42, 12.65, 36.25)) # These go: xmin (left), xmax (right), ymin (bottom), ymax (top)
+ex <- extent(c(-117.55, -92.22, 14.25, 37.85)) # These go: xmin (left), xmax (right), ymin (bottom), ymax (top)
+mexico_us_elevs_cropped <- crop(mexico_us_elev, ex)
+extent(mexico_us_elevs_cropped)
+mexico_us_cropped <- crop(all_countries, ex)
+```
+
+
+# PRINT FINAL MAP
+```{r}
+pdf("./OLWA_BHCO_OverlapElevationMap_Labels_Bold_1km.pdf", useDingbats = FALSE)
+plot(mexico_us_elevs_cropped, col = colorRampPalette(c("grey33","grey93"))(100), cex.axis=1.3, ext=ex, xlab="Longitude", ylab="Latitude", cex.lab=1.3) 
+# grey20 to grey 80 is also nice but a little darker; grey30-grey90 good
+#plot(mexico_us_elevs_cropped, col = cividis(100), cex.axis=1.5, ext=ex) # Alternate elev layer option
+plot(all_countries, add=TRUE, border = "gray92", lwd = 0.05) # outlines surrounding countries; must be first to "layer"
+plot(mexico, add=TRUE, border = "white", lwd = 1.5) # This outlines Mexico 
+plot(us, add=TRUE, border = "white", lwd = 1.5) # This outlines US states 
+plot(locality.coords, add=TRUE, pch=21, cex=1.3, bg="#ECA326") # pch=21 is circle w/ black outline
+plot(simultaneous.localities, add=TRUE, pch=21, cex=1.3, bg="orchid") # pch=21 is circle w/ black outline
+plot(jackpeak.coords, add=TRUE, pch=24, cex=1.5, bg="cyan3") # Jack's Peak observation point: #3E52A8
+text(x=-112, y=20, label="Pacific Ocean", font=3) # Font=3 specifies italics 
+text(x=-103.6, y=26, label="Mexico", cex=1.0, font=2) # Mexico label
+text(x=-99.2, y=31.5, label="Texas", cex=0.75, font=2) # Texas label 
+text(x=-112.7, y=32.9, label="Arizona", cex=0.75, font=2) # Arizona label
+text(x=-105.4, y=35.3, label="New Mexico", cex=0.75, font=2) # New Mexico label, sticking into TX
+#text(x=-106.0, y=36.0, label="New Mexico") # New Mexico label, top of state
+#text(x=-105.7, y=36.0, label="New Mexico") # New Mexico label, offcenter top
+# text(x=-106.0, y=36.2, label="New \n Mexico") # New Mexico label, two-lines
+addscalebar(plotepsg = 4326, widthhint=0.20, labelpadin = 0.08, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+dev.off()
+```
+
+
+----
+
+Tutorials and helpful info: 
+
+Strimas-Mackey et al. 2020, "Best Practices for Using eBird Data" tutorial: https://cornelllabofornithology.github.io/ebird-best-practices/index.html
+
+Nifty tutorial on spatial analysis in R: https://rstudio-pubs-static.s3.amazonaws.com/282685_29e18d9eba90458f93ef5ff5dc1ae419.html
+
+Info on base R graphic parameters: https://www.statmethods.net/advgraphs/parameters.html
+
+Some good R spatial info: 
+https://geocompr.robinlovelace.net/adv-map.html
+https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-2.html
+https://www.r-spatial.org/r/2018/10/25/ggplot2-sf.html
+
+
+Tutorial for getting elevation data from GBIF:
+https://luisdva.github.io/rstats/Elevation-data-in-R-using-rgbif/
+
+Tutorial for rgbif package: 
+https://ropensci.org/tutorials/rgbif_tutorial/
+
+FYI, if rgbif occ_download_import() function breaks again and repeatedly gives "Fatal error - R abort" message, see this link for helpful troubleshooting: https://github.com/ropensci/rgbif/issues/353
+
