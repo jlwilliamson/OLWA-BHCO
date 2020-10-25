@@ -1,5 +1,5 @@
 # OLWA-BHCO
-This repository includes all data processing code associated with our note for *Western Birds*, "Olive Warbler brood parasitism by the Brown-headed Cowbird", In revision. 
+This repository includes all data processing code associated with our note for *Western Birds*, "Olive Warbler brood parasitism by the Brown-headed Cowbird and quantification of range overlap", In revision. 
 
 Our observation of the second-documented instance of Olive Warbler brood parasitism by the Brown-headed Cowbird in New Mexico prompted us to ask: How often do these two species co-occur synchronously and/or asynchronously in habitat and/or elevation? To address locality overlap of these two species across the Olive Warbler range, we conducted a brief analysis of Global Biodiversity and Information Facility (GBIF) and eBird records. 
 
