@@ -1,6 +1,6 @@
 # Code for Williamson & Baumann, "Olive Warbler brood parasitism by the Brown-headed Cowbird and quantification of range overlap" [![DOI](https://zenodo.org/badge/306761721.svg)](https://zenodo.org/badge/latestdoi/306761721)
 
-Paper *In revision*. 
+Paper *In Press*. 
 
 Our observation of the second-documented instance of Olive Warbler brood parasitism by the Brown-headed Cowbird in New Mexico prompted us to ask: *How often do these two species co-occur synchronously and/or asynchronously in habitat and/or elevation?* To address locality overlap of these two species across the Olive Warbler range, we conducted a brief analysis of Global Biodiversity and Information Facility (GBIF) and eBird records. 
 
