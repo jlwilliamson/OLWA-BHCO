@@ -19,9 +19,10 @@ FYI, code in this script is not nearly as streamlined as it could be, but it ser
 
 
 ---
+# Set WD and clear workspace 
 ```{R}
 rm(list=ls(all=TRUE)) # clear workspace 
-setwd("/Users/Jessie/Dropbox (MSBbirds)/Rdirectory/OLWA-cowbird")
+setwd("/Users/Jessie/Dropbox (MSBbirds)/Rdirectory/OLWA-BHCO")
 ```
 
 
